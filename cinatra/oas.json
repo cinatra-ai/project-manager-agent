@@ -3,7 +3,7 @@
   "component_type": "Flow",
   "id": "project-manager-agent-flow",
   "name": "Project Manager",
-  "description": "Generic project-manager agent: instantiates a typed project template into the configured PM work store and ticks it to completion.",
+  "description": "Generic project-manager agent: instantiates a typed project template into the configured PM work store and ticks it to completion. Thin tick-shell: the flow carries the deterministic phase sequencing (instantiate -> tick -> report); every state decision is made by the host primitives (instantiateProject, the readyItems validator, dispatchProjectWorker), never by prose.",
   "metadata": {
     "cinatra": {
       "type": "flow",
@@ -13,11 +13,37 @@
         "preferredProvider": "anthropic",
         "preferredModel": "claude-sonnet-4-6"
       },
-      "toolboxes": []
+      "toolboxes": [],
+      "projectPrimitiveTools": {
+        "description": "The host tool surface this tick-shell drives. Each tool is a run-token-authenticated MCP tool the host exposes to the PM seat's own run; the host binds every hostDerived operand server-side (auth-derived org, the persisted instance, the live project lease, the calling tick run) and NEVER accepts them from the model. agentSupplied lists are the COMPLETE set the model may pass - pinned by this repo's tick-shell contract tests against the host primitive input contracts (cinatra src/lib/project-instantiation.ts + src/lib/project-dispatch.ts).",
+        "project_instantiate": {
+          "primitive": "instantiateProject",
+          "agentSupplied": ["projectRef", "templatePackage", "anchorDate", "projectId", "configuredProviderId"],
+          "hostDerived": ["orgId", "pmAgentPackage"],
+          "outcomes": ["instantiated", "already_instantiated", "rejected", "failed"]
+        },
+        "project_tick_context": {
+          "primitive": "readyItems (sdk-extensions project-template-contract) over the persisted instance's live PM work items",
+          "agentSupplied": ["projectRef", "asOf"],
+          "hostDerived": ["orgId", "instance", "items", "readySet"],
+          "outcomes": ["context", "rejected", "failed"]
+        },
+        "project_dispatch_worker": {
+          "primitive": "dispatchProjectWorker",
+          "agentSupplied": ["projectRef", "pick", "role", "asOf", "actionVersion", "runInput"],
+          "hostDerived": ["orgId", "items", "lease", "parentRunId"],
+          "outcomes": ["dispatched", "already_dispatched", "rejected", "failed"]
+        }
+      }
     }
   },
   "inputs": [
-    { "title": "input", "type": "string" }
+    { "title": "project_ref", "type": "string" },
+    { "title": "template_package", "type": "string" },
+    { "title": "anchor_date", "type": "string" },
+    { "title": "as_of", "type": "string" },
+    { "title": "configured_provider_id", "type": "string" },
+    { "title": "project_id", "type": "string" }
   ],
   "outputs": [
     { "title": "result", "type": "string" }
@@ -25,36 +51,99 @@
   "start_node": { "$component_ref": "start" },
   "nodes": [
     { "$component_ref": "start" },
-    { "$component_ref": "run" },
+    { "$component_ref": "instantiate" },
+    { "$component_ref": "tick" },
     { "$component_ref": "end" }
   ],
   "control_flow_connections": [
     {
       "component_type": "ControlFlowEdge",
-      "name": "start_to_run",
+      "name": "start_to_instantiate",
       "from_node": { "$component_ref": "start" },
-      "to_node": { "$component_ref": "run" }
+      "to_node": { "$component_ref": "instantiate" }
     },
     {
       "component_type": "ControlFlowEdge",
-      "name": "run_to_end",
-      "from_node": { "$component_ref": "run" },
+      "name": "instantiate_to_tick",
+      "from_node": { "$component_ref": "instantiate" },
+      "to_node": { "$component_ref": "tick" }
+    },
+    {
+      "component_type": "ControlFlowEdge",
+      "name": "tick_to_end",
+      "from_node": { "$component_ref": "tick" },
       "to_node": { "$component_ref": "end" }
     }
   ],
   "data_flow_connections": [
     {
       "component_type": "DataFlowEdge",
-      "name": "start_input_to_run_input",
+      "name": "start_project_ref_to_instantiate",
       "source_node": { "$component_ref": "start" },
-      "source_output": "input",
-      "destination_node": { "$component_ref": "run" },
-      "destination_input": "input"
+      "source_output": "project_ref",
+      "destination_node": { "$component_ref": "instantiate" },
+      "destination_input": "project_ref"
     },
     {
       "component_type": "DataFlowEdge",
-      "name": "run_result_to_end_result",
-      "source_node": { "$component_ref": "run" },
+      "name": "start_template_package_to_instantiate",
+      "source_node": { "$component_ref": "start" },
+      "source_output": "template_package",
+      "destination_node": { "$component_ref": "instantiate" },
+      "destination_input": "template_package"
+    },
+    {
+      "component_type": "DataFlowEdge",
+      "name": "start_anchor_date_to_instantiate",
+      "source_node": { "$component_ref": "start" },
+      "source_output": "anchor_date",
+      "destination_node": { "$component_ref": "instantiate" },
+      "destination_input": "anchor_date"
+    },
+    {
+      "component_type": "DataFlowEdge",
+      "name": "start_configured_provider_id_to_instantiate",
+      "source_node": { "$component_ref": "start" },
+      "source_output": "configured_provider_id",
+      "destination_node": { "$component_ref": "instantiate" },
+      "destination_input": "configured_provider_id"
+    },
+    {
+      "component_type": "DataFlowEdge",
+      "name": "start_project_id_to_instantiate",
+      "source_node": { "$component_ref": "start" },
+      "source_output": "project_id",
+      "destination_node": { "$component_ref": "instantiate" },
+      "destination_input": "project_id"
+    },
+    {
+      "component_type": "DataFlowEdge",
+      "name": "start_project_ref_to_tick",
+      "source_node": { "$component_ref": "start" },
+      "source_output": "project_ref",
+      "destination_node": { "$component_ref": "tick" },
+      "destination_input": "project_ref"
+    },
+    {
+      "component_type": "DataFlowEdge",
+      "name": "start_as_of_to_tick",
+      "source_node": { "$component_ref": "start" },
+      "source_output": "as_of",
+      "destination_node": { "$component_ref": "tick" },
+      "destination_input": "as_of"
+    },
+    {
+      "component_type": "DataFlowEdge",
+      "name": "instantiate_result_to_tick",
+      "source_node": { "$component_ref": "instantiate" },
+      "source_output": "result",
+      "destination_node": { "$component_ref": "tick" },
+      "destination_input": "instantiation"
+    },
+    {
+      "component_type": "DataFlowEdge",
+      "name": "tick_result_to_end_result",
+      "source_node": { "$component_ref": "tick" },
       "source_output": "result",
       "destination_node": { "$component_ref": "end" },
       "destination_input": "result"
@@ -67,41 +156,85 @@
       "name": "Inputs",
       "metadata": {
         "cinatra": {
-          "required": ["input"]
+          "required": ["project_ref", "template_package", "anchor_date"]
         }
       },
       "inputs": [
-        { "title": "input", "type": "string" }
+        { "title": "project_ref", "type": "string" },
+        { "title": "template_package", "type": "string" },
+        { "title": "anchor_date", "type": "string" },
+        { "title": "as_of", "type": "string" },
+        { "title": "configured_provider_id", "type": "string" },
+        { "title": "project_id", "type": "string" }
       ]
     },
-    "run": {
+    "instantiate": {
       "component_type": "ApiNode",
-      "id": "run",
-      "name": "Run via /api/llm-bridge",
+      "id": "instantiate",
+      "name": "Instantiate the project (host primitive, sticky fail-closed)",
       "url": "{{CINATRA_BASE_URL}}/api/llm-bridge",
       "http_method": "POST",
       "data": {
         "agent_id": "project-manager-agent",
-        "system": "You are the Project Manager agent. Follow the SKILL.md step-by-step and return a single JSON object as specified there — nothing else.",
-        "user": "Process the following input per the SKILL.md recipe and return the result JSON.\n\nInput: {{ input }}",
+        "system": "You are the Project Manager agent in the INSTANTIATE phase. Follow the SKILL.md INSTANTIATE recipe exactly and return a single JSON object as specified there - nothing else.",
+        "user": "PHASE: INSTANTIATE\n\nInstantiate (or idempotently re-resolve) the project instance by calling the project_instantiate tool EXACTLY ONCE with EXACTLY these arguments and no others:\n- projectRef: {{ project_ref }}\n- templatePackage: {{ template_package }}\n- anchorDate: {{ anchor_date }}\n- projectId: {{ project_id }} (omit the argument when blank)\n- configuredProviderId: {{ configured_provider_id }} (omit the argument when blank)\n\nThen return the phase-result JSON per the SKILL.md INSTANTIATE recipe.",
         "cinatra_llm": {
           "preferredProvider": "anthropic",
           "preferredModel": "claude-sonnet-4-6"
-        },
-        "toolbox_ids": []
+        }
       },
       "inputs": [
-        { "title": "input", "type": "string" }
+        { "title": "project_ref", "type": "string" },
+        { "title": "template_package", "type": "string" },
+        { "title": "anchor_date", "type": "string" },
+        { "title": "configured_provider_id", "type": "string" },
+        { "title": "project_id", "type": "string" }
       ],
       "outputs": [
         { "title": "result", "type": "string" }
       ],
       "metadata": {
         "cinatra": {
-          "riskClass": "read_only",
+          "riskClass": "write",
           "requiresApproval": false,
           "packageName": "@cinatra-ai/project-manager-agent",
-          "description": "Single ApiNode to /api/llm-bridge. The bridge auto-discovers SKILL.md by agent_id and runs the prompt. Replace this stub with the real node graph for your agent."
+          "phase": "instantiate",
+          "tools": ["project_instantiate"],
+          "description": "Thin shell over the host instantiateProject primitive: PM-seat kind gate, template authority (installed finalized payload, never caller bytes), once-at-instantiation provider selection (configured wins; auto iff exactly one; fail-closed on none/several), sticky-binding idempotency/INSTANCE_DRIFT. The model passes ONLY the agentSupplied arguments; the host derives orgId and the PM seat from the authenticated run."
+        }
+      }
+    },
+    "tick": {
+      "component_type": "ApiNode",
+      "id": "tick",
+      "name": "Tick: ready set -> dispatch workers, surface human work",
+      "url": "{{CINATRA_BASE_URL}}/api/llm-bridge",
+      "http_method": "POST",
+      "data": {
+        "agent_id": "project-manager-agent",
+        "system": "You are the Project Manager agent in the TICK phase. Follow the SKILL.md TICK recipe exactly and return a single JSON object as specified there - nothing else.",
+        "user": "PHASE: TICK\n\nInstantiation phase result (JSON): {{ instantiation }}\n\nTick the project:\n1. Call project_tick_context with projectRef: {{ project_ref }} and asOf: {{ as_of }} (omit asOf when blank; the host defaults it to today). The host returns the persisted instance, every cinatra-managed work item in the project scope, and the machine-computed ready set.\n2. For EACH ready item whose template task binds a worker role, call project_dispatch_worker with exactly: projectRef, pick (the item's naturalKey), role (the template task's role - never a package name), asOf, actionVersion (0 unless the SKILL.md recovery rule says otherwise), runInput (per the SKILL.md runInput rule).\n3. NEVER dispatch human or approval items; report them as waiting-on-human instead.\n\nThen return the phase-result JSON per the SKILL.md TICK recipe.",
+        "cinatra_llm": {
+          "preferredProvider": "anthropic",
+          "preferredModel": "claude-sonnet-4-6"
+        }
+      },
+      "inputs": [
+        { "title": "project_ref", "type": "string" },
+        { "title": "as_of", "type": "string" },
+        { "title": "instantiation", "type": "string" }
+      ],
+      "outputs": [
+        { "title": "result", "type": "string" }
+      ],
+      "metadata": {
+        "cinatra": {
+          "riskClass": "write",
+          "requiresApproval": false,
+          "packageName": "@cinatra-ai/project-manager-agent",
+          "phase": "tick",
+          "tools": ["project_tick_context", "project_dispatch_worker"],
+          "description": "Thin shell over the host tick primitives. Readiness is the deterministic sdk-extensions readyItems predicate computed HOST-side (deps done + pickable status + unclaimed + start-date reached); the dispatch primitive re-validates the pick, the role binding, the worker allowlist, the lease, and the ledger idempotency before any child run exists. The model proposes picks from the host-computed ready set only; a hallucinated pick is rejected deterministically."
         }
       }
     },
