@@ -1,0 +1,23 @@
+{
+  "name": "@cinatra-ai/project-manager-agent",
+  "version": "0.1.0",
+  "license": "Apache-2.0",
+  "description": "Generic project-manager agent: instantiates a typed project template into the configured PM work store and ticks it to completion.",
+  "type": "module",
+  "files": [
+    "cinatra",
+    "skills"
+  ],
+  "cinatra": {
+    "apiVersion": "cinatra.ai/v1",
+    "kind": "agent",
+    "displayName": "Project Manager",
+    "dependencies": [],
+    "consumes": [
+      {
+        "primitive": "pm-work-store",
+        "requirement": "required"
+      }
+    ]
+  }
+}
