@@ -35,8 +35,13 @@ const pilotManifest = JSON.parse(
 
 // --- the pinned host-contract mirrors ---------------------------------------
 
-// ProjectInstantiationInput (src/lib/project-instantiation.ts): orgId and the
-// PM seat are HOST-derived (auth + run identity); the rest is agent-suppliable.
+// The project_instantiate TOOL composes TWO host pieces: (1)
+// ProjectInstantiationInput (src/lib/project-instantiation.ts) — orgId and
+// the PM seat are HOST-derived (auth + run identity); projectRef,
+// templatePackage, projectId, configuredProviderId are agent-suppliable; the
+// primitive itself takes NO date — plus (2) deterministic materialization
+// (MaterializeOptions.anchorDate in the sdk-extensions template contract),
+// which is where anchorDate goes.
 const INSTANTIATE_AGENT_SUPPLIED = ["projectRef", "templatePackage", "anchorDate", "projectId", "configuredProviderId"];
 const INSTANTIATE_HOST_DERIVED = ["orgId", "pmAgentPackage"];
 
