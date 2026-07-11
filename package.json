@@ -5,7 +5,7 @@
   "description": "Generic project-manager agent: instantiates a typed project template into the configured PM work store and ticks it to completion.",
   "type": "module",
   "scripts": {
-    "test": "node --test"
+    "test": "node tests/run-all.mjs"
   },
   "files": [
     "cinatra",
