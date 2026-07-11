@@ -1,0 +1,29 @@
+{
+  "name": "@cinatra-ai/release-announcement-agent",
+  "version": "0.1.0",
+  "license": "Apache-2.0",
+  "description": "Release-announcement project agent: ships the typed release-announcement project template (the re-cut of the major-release BPMN workflow) that the generic Project Manager agent instantiates and ticks.",
+  "type": "module",
+  "files": [
+    "cinatra",
+    "skills"
+  ],
+  "cinatra": {
+    "apiVersion": "cinatra.ai/v1",
+    "kind": "agent",
+    "displayName": "Release Announcement",
+    "consumes": [],
+    "dependencies": [
+      {
+        "packageName": "@cinatra-ai/blog-pipeline-agent",
+        "kind": "agent",
+        "edgeType": "runtime",
+        "versionConstraint": {
+          "kind": "semver-range",
+          "range": "^0.1.0"
+        },
+        "requirement": "required"
+      }
+    ]
+  }
+}

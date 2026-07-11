@@ -1,0 +1,56 @@
+{
+  "formatVersion": "cinatra.ai/project-template@1",
+  "id": "release-announcement",
+  "name": "Release announcement",
+  "anchor": {
+    "id": "target",
+    "label": "Target release date"
+  },
+  "tasks": [
+    {
+      "id": "kickoff",
+      "title": "Release kickoff",
+      "body": "Kick off the release announcement: confirm the target date, the owners, and the scope of what ships. Checkpoint - a human marks this done.",
+      "schedule": { "dueOffsetDays": -14 }
+    },
+    {
+      "id": "blog",
+      "title": "Draft the launch blog post",
+      "body": "Draft the launch blog post for this release. The dispatched worker agent receives this item's title and body as its brief; the product/release context rides the project instance.",
+      "dependsOn": ["kickoff"],
+      "schedule": { "dueOffsetDays": -7 },
+      "worker": {
+        "role": "launch-blog-writer",
+        "packageName": "@cinatra-ai/blog-pipeline-agent",
+        "versionConstraint": {
+          "kind": "semver-range",
+          "range": "^0.1.0"
+        }
+      }
+    },
+    {
+      "id": "legal",
+      "title": "Legal sign-off",
+      "body": "Review the drafted announcement content for legal risk and sign off. A rejection sends the content back for revision; nothing behind this gate proceeds until a human resolves it.",
+      "dependsOn": ["blog"],
+      "schedule": { "dueOffsetDays": -3 },
+      "approval": {
+        "id": "legal-signoff",
+        "assigneeRole": "organization"
+      },
+      "acceptance": [
+        {
+          "id": "legal-clear",
+          "description": "The announcement content carries no unreviewed legal claims (trademarks, comparative claims, forward-looking statements)."
+        }
+      ]
+    },
+    {
+      "id": "announce",
+      "title": "Announce the release is live",
+      "body": "Publish the announcement that the release has shipped.",
+      "dependsOn": ["legal"],
+      "schedule": { "dueOffsetDays": 0 }
+    }
+  ]
+}
