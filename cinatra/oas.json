@@ -17,7 +17,7 @@
       "projectPrimitiveTools": {
         "description": "The host tool surface this tick-shell drives. Each tool is a run-token-authenticated MCP tool the host exposes to the PM seat's own run; the host binds every hostDerived operand server-side (auth-derived org, the persisted instance, the live project lease, the calling tick run) and NEVER accepts them from the model. agentSupplied lists are the COMPLETE set the model may pass - pinned by this repo's tick-shell contract tests against the host primitive input contracts (cinatra src/lib/project-instantiation.ts + src/lib/project-dispatch.ts).",
         "project_instantiate": {
-          "primitive": "instantiateProject",
+          "primitive": "instantiateProject + deterministic materialization (materializeProjectTemplate find-or-create into the persisted provider's PmWorkStore; anchorDate is the MaterializeOptions.anchorDate operand - instantiateProject itself takes no date)",
           "agentSupplied": ["projectRef", "templatePackage", "anchorDate", "projectId", "configuredProviderId"],
           "hostDerived": ["orgId", "pmAgentPackage"],
           "outcomes": ["instantiated", "already_instantiated", "rejected", "failed"]
