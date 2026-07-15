@@ -1,0 +1,29 @@
+{
+  "name": "@cinatra-ai/blog-content-agent",
+  "version": "0.1.0",
+  "license": "Apache-2.0",
+  "description": "Blog-content project agent: ships the typed blog-content project template (the re-cut of the retired blog-content BPMN publish workflow) that the generic Project Manager agent instantiates and ticks.",
+  "type": "module",
+  "files": [
+    "cinatra",
+    "skills"
+  ],
+  "cinatra": {
+    "apiVersion": "cinatra.ai/v1",
+    "kind": "agent",
+    "displayName": "Blog Content Publish",
+    "consumes": [],
+    "dependencies": [
+      {
+        "packageName": "@cinatra-ai/blog-wordpress-publish-agent",
+        "kind": "agent",
+        "edgeType": "runtime",
+        "versionConstraint": {
+          "kind": "semver-range",
+          "range": "^0.1.0"
+        },
+        "requirement": "required"
+      }
+    ]
+  }
+}
