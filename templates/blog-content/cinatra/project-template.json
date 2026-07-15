@@ -1,0 +1,52 @@
+{
+  "formatVersion": "cinatra.ai/project-template@1",
+  "id": "blog-content",
+  "name": "Blog content publish",
+  "anchor": {
+    "id": "target",
+    "label": "Target publish date"
+  },
+  "tasks": [
+    {
+      "id": "review",
+      "title": "Review the publish bundle",
+      "body": "Review the assembled blog post and hero-image bundle before it goes to WordPress. An organization approver signs off; a rejection sends the bundle back for revision and nothing behind this gate proceeds until a human resolves it.",
+      "approval": {
+        "id": "publish-review",
+        "assigneeRole": "organization"
+      },
+      "acceptance": [
+        {
+          "id": "bundle-complete",
+          "description": "The post draft and hero image are complete, on-brand, and ready to publish."
+        }
+      ]
+    },
+    {
+      "id": "draft",
+      "title": "Create the WordPress draft",
+      "body": "Create the WordPress draft from the approved bundle. The dispatched worker agent receives this item's title and body as its brief; the post, project, and WordPress-instance context rides the project instance.",
+      "dependsOn": ["review"],
+      "worker": {
+        "role": "wordpress-draft-writer",
+        "packageName": "@cinatra-ai/blog-wordpress-publish-agent",
+        "versionConstraint": {
+          "kind": "semver-range",
+          "range": "^0.1.0"
+        }
+      }
+    },
+    {
+      "id": "publish",
+      "title": "Publish in the WordPress admin",
+      "body": "Review the created draft in the WordPress admin and publish it. Checkpoint - a human marks this done.",
+      "dependsOn": ["draft"]
+    },
+    {
+      "id": "notify",
+      "title": "Notify that the publish is complete",
+      "body": "Confirm the post is live and notify the team that publication is complete. Checkpoint - a human marks this done.",
+      "dependsOn": ["publish"]
+    }
+  ]
+}

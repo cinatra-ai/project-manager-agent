@@ -5,3 +5,4 @@
 import "./template-validation.test.mjs";
 import "./tick-shell-contract.test.mjs";
 import "./kind-gate-acceptance.test.mjs";
+import "./blog-content.test.mjs";
