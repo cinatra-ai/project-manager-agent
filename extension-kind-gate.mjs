@@ -8,8 +8,8 @@
 //
 // This file is shipped INTO each scaffolded Cinatra extension repo by
 // `cinatra create-extension <kind>` (the cinatra-cli authoring surface) and run
-// by the repo's standalone CI. It covers ALL FIVE extension kinds (agent,
-// connector, artifact, skill, workflow).
+// by the repo's standalone CI. It covers the four extension kinds (agent,
+// connector, artifact, skill).
 //
 // CANONICAL OWNER: this gate is the canonical author-facing pre-publish gate
 // (cinatra-cli#72). Its rules mirror the AUTHORITATIVE host enforcers
@@ -27,7 +27,7 @@
 // local gate and the install pipeline cannot disagree):
 //
 //   COMMON (every kind):
-//     - manifest shape: cinatra.kind ∈ the 5 kinds; cinatra.apiVersion ===
+//     - manifest shape: cinatra.kind ∈ the four kinds; cinatra.apiVersion ===
 //       "cinatra.ai/v1"; cinatra.dependencies is an array of well-formed
 //       ExtensionDependency entries (mirrors extension-deps-gate.mjs +
 //       inventory.isValidExtensionDependency).
@@ -74,20 +74,22 @@
 //     - artifact  → name @cinatra-ai/<slug>-artifact; kind:"artifact"; NO
 //                    cinatra.oas; mandatory valid cinatra.artifact descriptor;
 //                    cinatra block carries only {kind,apiVersion,artifact,
-//                    dependencies,roles} (mirrors artifact-handler.validate).
+//                    dependencies,roles,displayName,vendor} (mirrors
+//                    artifact-handler.validate + the shared
+//                    ARTIFACT_ALLOWED_CINATRA_KEYS; displayName + vendor are
+//                    cross-kind presentation/byline metadata).
 //     - skill     → name ends `-skills`; kind:"skill" (mirrors the kind-at-end
 //                    naming-conformance rule for skills).
-//     - workflow  → package shape (mirrors validateWorkflowExtensionPackage,
-//                    INCLUDING the `roles` allowed key) + exactly one well-formed
-//                    cinatra/workflow.bpmn.
+//   (The `workflow` kind is RETIRED: a package declaring cinatra.kind:"workflow"
+//    is rejected as an unknown kind — there is no workflow per-kind gate.)
 //
 // WARNINGS (printed, never fail): the gate prints advisory notes for things it
 // cannot certify standalone or that are release/runtime-time (source serverEntry
 // not yet built; an sdkAbiRange the CURRENT host ABI 2.2.0 would not satisfy).
 //
-// SCOPE (intentionally a PRE-PUBLISH local gate; the authoritative Profile-1.0
-// BPMN compile + full OAS runtime-invariant validation + the trust/signature
-// check re-run marketplace-side at publish/install). STANDALONE SCOPE NOTE: the
+// SCOPE (intentionally a PRE-PUBLISH local gate; the authoritative full OAS
+// runtime-invariant validation + the trust/signature check re-run
+// marketplace-side at publish/install). STANDALONE SCOPE NOTE: the
 // monorepo derives the first-party scope set from the on-disk extensions/<scope>/
 // dirs; a single repo cannot see sibling extension scopes, so this gate treats
 // ONLY @cinatra-ai as the first-party scope. A cross-extension coupling on a
@@ -101,9 +103,18 @@
 //
 // Exit codes: 0 clean / pass · 1 one or more violations.
 // ---------------------------------------------------------------------------
+// >>> ERT-MIRROR-ONLY-BEGIN: vendoring note (stripped by the canonical projection) >>>
+// The release tooling VENDORS the cinatra-cli canonical gate above and ships it
+// into monorepo-EXTRACTED repos. The ONLY local edits are the fenced
+// `ERT-MIRROR-ONLY` blocks below (the hot-installability UI-surface classifier +
+// its connector advisory). Everything OUTSIDE these fences MUST stay
+// byte-identical to the cinatra-cli canonical — a scheduled drift audit strips
+// these fences and diffs the result against the live canonical. Change the
+// canonical upstream (cinatra-cli), then re-sync here; do not diverge locally.
+// <<< ERT-MIRROR-ONLY-END: vendoring note <<<
 
 import { readFileSync, existsSync, readdirSync, statSync } from "node:fs";
-import { resolve, join, basename, dirname, relative, normalize, isAbsolute, sep } from "node:path";
+import { resolve, join, dirname, relative, normalize, isAbsolute, sep } from "node:path";
 
 // ===========================================================================
 // arg parsing
@@ -134,7 +145,7 @@ export function parseArgs(argv) {
 // monorepo parity test (extension-release-tooling tests + the cinatra-side
 // gates) is the drift guard; these lists must match exactly.
 // ===========================================================================
-export const VALID_KINDS = ["agent", "connector", "artifact", "skill", "workflow"];
+export const VALID_KINDS = ["agent", "connector", "artifact", "skill"];
 export const API_VERSION = "cinatra.ai/v1";
 
 // sdk-extensions host-context.HOST_PORT_NAMES (ABI FROZEN).
@@ -543,6 +554,56 @@ export function scanHostPeerValueImports(packageRoot, pkg, entryAbs) {
   return [...hits].sort();
 }
 
+// >>> ERT-MIRROR-ONLY-BEGIN: hot-installability UI-surface classifier (absent from the cinatra-cli canonical) >>>
+// ===========================================================================
+// Hot-installability UI-surface classifier — mirror of the host
+// `classifyUiSurface` (cinatra scripts/extensions/generate-extension-manifest.mjs).
+//
+// A connector is HOT-installable (no app rebuild) only when its setup surface is
+// declarative: `cinatra.uiSurface:"schema-config"` (+ a `cinatra.configSchema`)
+// or a facade/no-UI connector. A connector whose setup page is a BUNDLED REACT
+// component (`cinatra.uiSurface:"bundled-react"`, or the legacy heuristic of a
+// bespoke `src/setup-page.tsx` / `src/settings-page.tsx`) is base-image-only —
+// the host raises ConnectorRequiresRebuildError and it is NOT hot-installable.
+//
+// This classifier is PURE over the manifest's cinatra block + presence flags so
+// it can be reused by the report + the validator WITHOUT re-running the gate
+// (no recursion into runGate). Only `connector` has a UI surface — every other
+// kind is declarative ⇒ classified `null` (hot).
+// ===========================================================================
+
+/** Filesystem presence flags the host derives in `entryFlags` (the bundled-react
+ * heuristic when no `cinatra.uiSurface` is declared). */
+export function readConnectorUiFlags(packageRoot) {
+  return {
+    hasSetupPage: existsSync(join(packageRoot, "src", "setup-page.tsx")),
+    hasSettingsPage: existsSync(join(packageRoot, "src", "settings-page.tsx")),
+  };
+}
+
+/**
+ * Classify a connector's UI surface. Mirrors host `classifyUiSurface` EXACTLY:
+ *   uiSurface:"schema-config" → "schema-config" (hot)
+ *   uiSurface:"bundled-react" → "bundled-react" (NOT hot — base-image-only)
+ *   else hasSetupPage || hasSettingsPage → "bundled-react" (legacy heuristic)
+ *   else → null (facade/runtime connector — hot)
+ * A non-connector kind is always `null` (declarative kinds are always hot).
+ *
+ * @param {string} kind the manifest `cinatra.kind`
+ * @param {object} cinatra the manifest `cinatra` block
+ * @param {{hasSetupPage:boolean, hasSettingsPage:boolean}} flags
+ * @returns {"schema-config"|"bundled-react"|null}
+ */
+export function classifyConnectorUiSurface(kind, cinatra, flags) {
+  if (kind !== "connector") return null;
+  const cin = isObj(cinatra) ? cinatra : {};
+  if (cin.uiSurface === "schema-config") return "schema-config";
+  if (cin.uiSurface === "bundled-react") return "bundled-react";
+  if (flags?.hasSetupPage || flags?.hasSettingsPage) return "bundled-react";
+  return null;
+}
+
+// <<< ERT-MIRROR-ONLY-END: hot-installability UI-surface classifier <<<
 /** The common (all-kinds) validation. Returns { errors:[], warnings:[] }. */
 export function validateCommon(packageRoot) {
   const errors = [];
@@ -636,6 +697,26 @@ export function validateCommon(packageRoot) {
     }
   }
 
+  // >>> ERT-MIRROR-ONLY-BEGIN: bundled-react hot-installability advisory (absent from the cinatra-cli canonical) >>>
+  // ---- hot-installability advisory (connector): a bundled-react setup surface
+  // is base-image-only, so the connector is NOT hot-installable (the host raises
+  // ConnectorRequiresRebuildError). This is a WARNING, never an error — a
+  // bundled-react connector stays a VALID extension during the cold→hot
+  // transition; the warning surfaces the follow-up (convert to schema-config).
+  if (cinatra.kind === "connector") {
+    const uiSurface = classifyConnectorUiSurface(cinatra.kind, cinatra, readConnectorUiFlags(packageRoot));
+    if (uiSurface === "bundled-react") {
+      warnings.push(
+        'bundled-legacy: not hot-installable — this connector ships a bundled-react setup ' +
+          'surface (cinatra.uiSurface:"bundled-react" or a src/setup-page.tsx / src/settings-page.tsx ' +
+          'page), which is base-image-only. Convert to cinatra.uiSurface:"schema-config" + a ' +
+          'declarative cinatra.configSchema to make it hot-installable (see mcp-server-connector#4 ' +
+          "exemplar). Bundled-react stays valid during the transition.",
+      );
+    }
+  }
+
+  // <<< ERT-MIRROR-ONLY-END: bundled-react hot-installability advisory <<<
   // ---- 4 + 5 + 6. @/ ban, SDK-only deps (source + manifest) ----
   const sourceFiles = walkSourceFiles(packageRoot);
   const selfName = typeof pkg.name === "string" ? pkg.name : null;
@@ -1444,10 +1525,6 @@ export function collectArtifactParityFindings(packageRoot, pkg) {
 /** Validate an agent extension at packageRoot. Pure: returns string[] errors. */
 export function validateAgent(packageRoot) {
   const errors = [];
-  // Typed project-template sidecar (optional; validated hard when present —
-  // the install pipeline REFUSES a violating package, so the local gate must
-  // catch it pre-publish).
-  errors.push(...validateProjectTemplateSidecar(packageRoot));
   const oasPath = join(packageRoot, "cinatra", "oas.json");
   // OAS optional at this gate: an agent without a generated OAS has no
   // LLM-visible prompt strings to scan. Marketplace-side owns "agent MUST ship OAS".
@@ -1462,279 +1539,6 @@ export function validateAgent(packageRoot) {
   const findings = [];
   walkLlmStrings(parsed, (field, text) => scanOasString(field, text, findings));
   for (const f of findings) errors.push(`cinatra/oas.json [${f.field}] ${f.token}: ${f.reason}`);
-  return errors;
-}
-
-// ===========================================================================
-// agent gate — typed PROJECT-TEMPLATE sidecar (cinatra/project-template.json).
-// Mirror of the AUTHORITATIVE host enforcers in the cinatra monorepo:
-// packages/sdk-extensions/src/project-template-contract.ts
-// (validateProjectTemplate — collect-ALL structural violations — plus the
-// exact-match "one truth source" worker-ref rule
-// checkTemplateWorkerRefsAgainstDependencies), wired into the install
-// pipeline by packages/agents/src/install-from-package.ts. An agent package
-// that ships a template the host would refuse must fail HERE, pre-publish.
-// The bracketed [code] tokens mirror the host violation codes one-to-one so
-// the parity fixtures can pin both sides.
-// ===========================================================================
-export const PROJECT_TEMPLATE_FORMAT_VERSION = "cinatra.ai/project-template@1";
-const PROJECT_TEMPLATE_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
-
-function isValidTemplateStableId(v) {
-  return typeof v === "string" && PROJECT_TEMPLATE_ID_RE.test(v);
-}
-
-function isValidTemplateVersionConstraint(v) {
-  if (!isObj(v)) return false;
-  if (v.kind === "semver-range") return typeof v.range === "string";
-  if (v.kind === "exact") return typeof v.version === "string";
-  if (v.kind === "git-ref") return typeof v.ref === "string";
-  return false;
-}
-
-function templateVersionConstraintsEqual(a, b) {
-  if (!isObj(a) || !isObj(b) || a.kind !== b.kind) return false;
-  if (a.kind === "semver-range") return a.range === b.range;
-  if (a.kind === "exact") return a.version === b.version;
-  if (a.kind === "git-ref") return a.ref === b.ref;
-  return false;
-}
-
-/** DFS cycle detection over well-formed dependsOn edges (mirrors the host's
- * findDependencyCycle: only follows edges to known ids, never self). */
-function findTemplateDependencyCycle(tasks, knownIds) {
-  const edges = new Map();
-  for (const t of tasks) {
-    if (!isObj(t) || typeof t.id !== "string") continue;
-    const deps = Array.isArray(t.dependsOn)
-      ? t.dependsOn.filter((d) => typeof d === "string" && knownIds.has(d) && d !== t.id)
-      : [];
-    edges.set(t.id, deps);
-  }
-  const color = new Map(); // 0 white, 1 gray, 2 black
-  const stack = [];
-  const visit = (id) => {
-    color.set(id, 1);
-    stack.push(id);
-    for (const next of edges.get(id) ?? []) {
-      const c = color.get(next) ?? 0;
-      if (c === 1) return [...stack.slice(stack.indexOf(next)), next];
-      if (c === 0) {
-        const found = visit(next);
-        if (found) return found;
-      }
-    }
-    stack.pop();
-    color.set(id, 2);
-    return null;
-  };
-  for (const id of edges.keys()) {
-    if ((color.get(id) ?? 0) === 0) {
-      const found = visit(id);
-      if (found) return found;
-    }
-  }
-  return null;
-}
-
-/** Structural template validation — mirror of the host validateProjectTemplate
- * (collect-ALL, deterministic order). Pure: returns string[] errors. */
-export function validateProjectTemplateObject(input) {
-  const errors = [];
-  const push = (code, path, message) => errors.push(`[${code}] ${path || "(root)"}: ${message}`);
-  if (!isObj(input)) {
-    push("not_object", "", "template must be an object");
-    return errors;
-  }
-  if (input.formatVersion !== PROJECT_TEMPLATE_FORMAT_VERSION) {
-    push("bad_format_version", "formatVersion", `formatVersion must be "${PROJECT_TEMPLATE_FORMAT_VERSION}"`);
-  }
-  if (!isValidTemplateStableId(input.id)) push("bad_template_id", "id", "id must be a stable token");
-  if (typeof input.name !== "string" || input.name.trim() === "") {
-    push("bad_template_name", "name", "name must be a non-empty string");
-  }
-  if (!isObj(input.anchor) || !isValidTemplateStableId(input.anchor.id)) {
-    push("bad_anchor", "anchor.id", "anchor.id must be a stable token");
-  }
-  const tasks = input.tasks;
-  if (!Array.isArray(tasks) || tasks.length === 0) {
-    push("no_tasks", "tasks", "tasks must be a non-empty array");
-    return errors;
-  }
-  const taskIds = new Set();
-  const roleToBinding = new Map();
-  tasks.forEach((task, i) => {
-    if (!isObj(task)) {
-      push("bad_task", `tasks[${i}]`, "task must be an object");
-      return;
-    }
-    if (!isValidTemplateStableId(task.id)) {
-      push("bad_task_id", `tasks[${i}].id`, "task id must be a stable token (no path separator)");
-    } else if (taskIds.has(task.id)) {
-      push("duplicate_task_id", `tasks[${i}].id`, `duplicate task id "${task.id}"`);
-    } else {
-      taskIds.add(task.id);
-    }
-    if (typeof task.title !== "string" || task.title.trim() === "") {
-      push("bad_task_title", `tasks[${i}].title`, "task title must be a non-empty string");
-    }
-  });
-  tasks.forEach((task, i) => {
-    if (!isObj(task)) return;
-    const at = `tasks[${i}]`;
-    if (task.dependsOn !== undefined) {
-      if (!Array.isArray(task.dependsOn)) {
-        push("bad_depends_on", `${at}.dependsOn`, "dependsOn must be an array of task ids");
-      } else {
-        const seen = new Set();
-        task.dependsOn.forEach((dep, j) => {
-          if (typeof dep !== "string" || !taskIds.has(dep)) {
-            push("unknown_dependency", `${at}.dependsOn[${j}]`, `dependsOn "${String(dep)}" is not a task id`);
-          } else if (dep === task.id) {
-            push("self_dependency", `${at}.dependsOn[${j}]`, "a task cannot depend on itself");
-          } else if (seen.has(dep)) {
-            push("duplicate_dependency", `${at}.dependsOn[${j}]`, `duplicate dependency "${dep}"`);
-          } else {
-            seen.add(dep);
-          }
-        });
-      }
-    }
-    if (task.schedule !== undefined && task.schedule !== null) {
-      if (!isObj(task.schedule)) {
-        push("bad_schedule", `${at}.schedule`, "schedule must be an object");
-      } else {
-        const s = task.schedule.startOffsetDays;
-        const d = task.schedule.dueOffsetDays;
-        if (s !== undefined && s !== null && !Number.isInteger(s)) {
-          push("bad_offset", `${at}.schedule.startOffsetDays`, "startOffsetDays must be an integer");
-        }
-        if (d !== undefined && d !== null && !Number.isInteger(d)) {
-          push("bad_offset", `${at}.schedule.dueOffsetDays`, "dueOffsetDays must be an integer");
-        }
-        if (
-          typeof s === "number" && Number.isFinite(s) &&
-          typeof d === "number" && Number.isFinite(d) &&
-          d < s
-        ) {
-          push("due_before_start", `${at}.schedule.dueOffsetDays`, "dueOffsetDays must be >= startOffsetDays");
-        }
-      }
-    }
-    if (task.worker !== undefined && task.worker !== null) {
-      const w = task.worker;
-      const wAt = `${at}.worker`;
-      const roleOk = isObj(w) && isValidTemplateStableId(w.role);
-      if (!roleOk) push("bad_worker_role", `${wAt}.role`, "worker.role must be a stable token");
-      if (!isObj(w) || typeof w.packageName !== "string" || w.packageName.trim() === "") {
-        push("bad_worker_package", `${wAt}.packageName`, "worker.packageName must be a non-empty string");
-      }
-      if (!isObj(w) || !isValidTemplateVersionConstraint(w.versionConstraint)) {
-        push("bad_worker_version", `${wAt}.versionConstraint`, "worker.versionConstraint is malformed");
-      }
-      if (roleOk && typeof w.packageName === "string" && isValidTemplateVersionConstraint(w.versionConstraint)) {
-        const prev = roleToBinding.get(w.role);
-        if (!prev) {
-          roleToBinding.set(w.role, { packageName: w.packageName, versionConstraint: w.versionConstraint });
-        } else if (
-          prev.packageName !== w.packageName ||
-          !templateVersionConstraintsEqual(prev.versionConstraint, w.versionConstraint)
-        ) {
-          push("inconsistent_worker_role", `${wAt}.role`, `role "${w.role}" is bound to more than one package/version`);
-        }
-      }
-    }
-    if (task.approval !== undefined && task.approval !== null) {
-      if (!isObj(task.approval) || !isValidTemplateStableId(task.approval.id)) {
-        push("bad_approval", `${at}.approval.id`, "approval.id must be a stable token");
-      }
-    }
-    if (task.acceptance !== undefined) {
-      if (!Array.isArray(task.acceptance)) {
-        push("bad_acceptance", `${at}.acceptance`, "acceptance must be an array");
-      } else {
-        const seen = new Set();
-        task.acceptance.forEach((c, j) => {
-          const cAt = `${at}.acceptance[${j}]`;
-          if (!isObj(c) || !isValidTemplateStableId(c.id)) {
-            push("bad_acceptance_id", `${cAt}.id`, "acceptance.id must be a stable token");
-          } else if (seen.has(c.id)) {
-            push("duplicate_acceptance_id", `${cAt}.id`, `duplicate acceptance id "${c.id}"`);
-          } else {
-            seen.add(c.id);
-          }
-          if (isObj(c) && (typeof c.description !== "string" || c.description.trim() === "")) {
-            push("bad_acceptance_desc", `${cAt}.description`, "acceptance.description must be non-empty");
-          }
-        });
-      }
-    }
-  });
-  const cycle = findTemplateDependencyCycle(tasks, taskIds);
-  if (cycle) push("cyclic_dependencies", "tasks", `dependency cycle: ${cycle.join(" -> ")}`);
-  return errors;
-}
-
-/** The exact-match "one truth source" worker-ref rule — mirror of the host
- * checkTemplateWorkerRefsAgainstDependencies: every template worker ref MUST
- * exact-match a manifest cinatra.dependencies edge by BOTH packageName AND
- * versionConstraint. Pure: returns string[] errors. */
-export function checkTemplateWorkerRefsAgainstManifest(template, dependencies) {
-  const errors = [];
-  const byPackage = new Map();
-  for (const dep of Array.isArray(dependencies) ? dependencies : []) {
-    if (isObj(dep) && typeof dep.packageName === "string") byPackage.set(dep.packageName, dep);
-  }
-  const tasks = Array.isArray(template?.tasks) ? template.tasks : [];
-  tasks.forEach((task, i) => {
-    const w = isObj(task) ? task.worker : null;
-    if (!w || !isObj(w)) return;
-    const at = `tasks[${i}].worker`;
-    const edge = byPackage.get(w.packageName);
-    if (!edge) {
-      errors.push(`[worker_not_in_dependencies] ${at}.packageName: worker "${w.packageName}" is not declared in cinatra.dependencies`);
-      return;
-    }
-    if (!templateVersionConstraintsEqual(w.versionConstraint, edge.versionConstraint)) {
-      errors.push(`[worker_version_mismatch] ${at}.versionConstraint: worker "${w.packageName}" version does not exact-match its cinatra.dependencies edge`);
-    }
-  });
-  return errors;
-}
-
-/** Validate the optional cinatra/project-template.json sidecar of an agent
- * package. Absent file → no errors (not a project-template package). Present →
- * structural validation + the exact-match worker-ref rule against the
- * manifest's cinatra.dependencies. Returns string[] errors, each prefixed with
- * the sidecar path. */
-export function validateProjectTemplateSidecar(packageRoot) {
-  const templatePath = join(packageRoot, "cinatra", "project-template.json");
-  if (!existsSync(templatePath)) return [];
-  const prefix = "cinatra/project-template.json";
-  let raw;
-  try {
-    raw = readFileSync(templatePath, "utf8");
-  } catch (err) {
-    return [`${prefix} [template_unreadable]: ${err instanceof Error ? err.message : String(err)}`];
-  }
-  let candidate;
-  try {
-    candidate = JSON.parse(raw);
-  } catch (err) {
-    return [`${prefix} [template_unparsable]: not valid JSON: ${err instanceof Error ? err.message : String(err)}`];
-  }
-  const errors = validateProjectTemplateObject(candidate).map((e) => `${prefix} ${e}`);
-  if (errors.length > 0) return errors;
-  let pkg;
-  try {
-    pkg = readPackageJson(packageRoot);
-  } catch {
-    // The common gate already reports an unreadable package.json; the
-    // worker-ref rule simply cannot run without it.
-    return errors;
-  }
-  const deps = Array.isArray(pkg?.cinatra?.dependencies) ? pkg.cinatra.dependencies : [];
-  errors.push(...checkTemplateWorkerRefsAgainstManifest(candidate, deps).map((e) => `${prefix} ${e}`));
   return errors;
 }
 
@@ -1775,10 +1579,89 @@ export function validateConnector(packageRoot) {
 // artifact gate — mirror of packages/extensions/src/artifact-handler.validate.
 // ===========================================================================
 export const ARTIFACT_NAME_RE = /^@cinatra-ai\/[a-z0-9][a-z0-9-]*-artifact$/;
-export const ARTIFACT_ALLOWED_CINATRA_KEYS = new Set(["kind", "apiVersion", "artifact", "dependencies", "roles"]);
+export const ARTIFACT_ALLOWED_CINATRA_KEYS = new Set(["kind", "apiVersion", "artifact", "dependencies", "roles", "displayName", "vendor"]);
 
 const SKILL_REF_IS_INVALID = (s) => /\.md$/i.test(s) || /^\.{0,2}\//.test(s) || s.startsWith("/");
 const ARTIFACT_FORMS = new Set(["file", "connectorRef", "dashboard"]);
+
+// cinatra#1621/#1622 — the versioned `cinatra.artifact.ui` renderer block. This
+// self-contained, zero-dependency kind-gate performs a VALUE-INDEPENDENT
+// structural PRE-SCREEN only: the object shape, the per-renderer shape, a
+// package-contained `entry` subpath, and the v1 NO-PORTS rule (a renderer
+// carries only { entry, propsApiVersion, representations? }). It deliberately
+// does NOT re-list the DERIVED values — the closed slot enum (detail/preview),
+// the exact `abiVersion`, or the GENERATED `sdkAbiRange` — which live in
+// packages/sdk-extensions/src/artifact-contract.ts and are AUTHORITATIVELY
+// enforced by the derive-from-live-source conformance gate
+// (scripts/extensions/conformance-gate.mjs, run per repo via the reusable
+// extension-conformance-gate workflow) and, fail-closed, at marketplace
+// publish. Re-listing those derived values in this copy would reintroduce
+// exactly the prose-vs-code drift the #979 conformance-gate design exists to
+// eliminate. Boot is field-tolerant (a malformed ui degrades-with-diagnostic
+// and never drops the extension's type registration or claims), so this
+// pre-screen exists to catch gross authoring mistakes early, not to be the
+// authoritative ui validator.
+
+/** Mirror of the leaf `isContainedEntryPath` (artifact-contract.ts): a
+ * package-relative, path-contained subpath — "./…", no ".."/empty/"." segment,
+ * no absolute path, no protocol/URL, no backslash. This is a path SHAPE rule
+ * (value-independent), so mirroring it here introduces no derived-value drift. */
+function isContainedRendererEntry(entry) {
+  if (typeof entry !== "string" || entry.length === 0) return false;
+  if (!entry.startsWith("./")) return false;
+  if (entry.includes("\\")) return false;
+  if (/^[a-z][a-z0-9+.-]*:/i.test(entry)) return false; // protocol / URL
+  return !entry.slice(2).split("/").some((s) => s === "" || s === "." || s === "..");
+}
+
+const ARTIFACT_UI_ALLOWED_KEYS = ["abiVersion", "sdkAbiRange", "renderers"];
+const ARTIFACT_UI_RENDERER_ALLOWED_KEYS = ["entry", "propsApiVersion", "representations"];
+
+/** VALUE-INDEPENDENT shallow structural pre-screen of a `cinatra.artifact.ui`
+ * block. Returns string[] errors ([] = shape-conformant). The caller invokes
+ * this only when `ui` is present (it is optional — a purely declarative
+ * artifact extension ships none). */
+export function validateArtifactUiShape(ui) {
+  const errors = [];
+  if (!isObj(ui)) return ["ui must be an object ({ abiVersion, sdkAbiRange, renderers })"];
+  for (const k of Object.keys(ui)) {
+    if (!ARTIFACT_UI_ALLOWED_KEYS.includes(k)) errors.push(`ui: unexpected key "${k}"`);
+  }
+  if (typeof ui.abiVersion !== "number" || !Number.isInteger(ui.abiVersion) || ui.abiVersion < 1) {
+    errors.push("ui.abiVersion must be a positive integer");
+  }
+  if (!nonEmptyStr(ui.sdkAbiRange)) errors.push("ui.sdkAbiRange must be a non-empty string");
+  if (!isObj(ui.renderers) || Object.keys(ui.renderers).length === 0) {
+    errors.push("ui.renderers must be a non-empty object mapping a v1 slot to a renderer");
+    return errors;
+  }
+  for (const [slot, r] of Object.entries(ui.renderers)) {
+    const at = `ui.renderers.${slot}`;
+    if (!isObj(r)) {
+      errors.push(`${at} must be an object ({ entry, propsApiVersion[, representations] })`);
+      continue;
+    }
+    // v1 NO-PORTS: a renderer requests no host ports — only these three keys.
+    for (const k of Object.keys(r)) {
+      if (!ARTIFACT_UI_RENDERER_ALLOWED_KEYS.includes(k)) {
+        errors.push(`${at}: unexpected key "${k}" — v1 renderers request NO host ports (only { entry, propsApiVersion, representations? })`);
+      }
+    }
+    if (!isContainedRendererEntry(r.entry)) {
+      errors.push(`${at}.entry must be a package-relative, path-contained subpath ("./…", no "..", no absolute path or URL)`);
+    }
+    if (typeof r.propsApiVersion !== "number" || !Number.isInteger(r.propsApiVersion) || r.propsApiVersion < 1) {
+      errors.push(`${at}.propsApiVersion must be an integer >= 1`);
+    }
+    if (
+      r.representations !== undefined &&
+      (!Array.isArray(r.representations) || r.representations.length === 0 || !r.representations.every(nonEmptyStr))
+    ) {
+      errors.push(`${at}.representations, when present, must be a non-empty array of MIME pattern strings`);
+    }
+  }
+  return errors;
+}
 
 /** Structural mirror of artifactDescriptorSchema (.strict() throughout). */
 export function validateArtifactDescriptor(a) {
@@ -1847,8 +1730,11 @@ export function validateArtifactDescriptor(a) {
     const v = a.matcherConfidenceThreshold;
     if (typeof v !== "number" || v < 0 || v > 1) errors.push("matcherConfidenceThreshold must be a number in [0,1]");
   }
+  if (a.ui !== undefined) {
+    for (const e of validateArtifactUiShape(a.ui)) errors.push(e);
+  }
   for (const k of Object.keys(a)) {
-    if (!["accepts", "satisfies", "templates", "skills", "agentDependencies", "matcherConfidenceThreshold"].includes(k)) {
+    if (!["accepts", "satisfies", "templates", "skills", "agentDependencies", "matcherConfidenceThreshold", "ui"].includes(k)) {
       errors.push(`unexpected key "${k}"`);
     }
   }
@@ -1876,7 +1762,7 @@ export function validateArtifactPackageShape(pkg) {
   }
   for (const k of Object.keys(cinatra)) {
     if (!ARTIFACT_ALLOWED_CINATRA_KEYS.has(k)) {
-      errors.push(`artifact extensions may only declare cinatra.{kind,apiVersion,artifact,dependencies,roles}; unexpected key "${k}"`);
+      errors.push(`artifact extensions may only declare cinatra.{kind,apiVersion,artifact,dependencies,roles,displayName,vendor}; unexpected key "${k}"`);
     }
   }
   return errors;
@@ -1928,173 +1814,6 @@ export function validateSkill(packageRoot) {
 }
 
 // ===========================================================================
-// workflow gate — package shape (mirror validateWorkflowExtensionPackage,
-// INCLUDING the `roles` allowed key — cinatra#151 Stage 5) + a single
-// well-formed cinatra/workflow.bpmn.
-// ===========================================================================
-const WORKFLOW_PACKAGE_NAME_RE = /^@[a-z0-9][a-z0-9-]*\/[a-z0-9][a-z0-9-]*-workflow$/;
-
-export function validateWorkflowPackageShape(pkg) {
-  const errors = [];
-  const cinatra = (pkg && pkg.cinatra) || {};
-  if (typeof pkg?.name !== "string" || !WORKFLOW_PACKAGE_NAME_RE.test(pkg.name)) {
-    errors.push(`package name must match @<scope>/<slug>-workflow (got ${JSON.stringify(pkg?.name)})`);
-  }
-  if (cinatra.kind !== "workflow") {
-    errors.push(`package.json must declare cinatra.kind: "workflow" (got ${JSON.stringify(cinatra.kind)})`);
-  }
-  if (cinatra.workflow !== undefined) {
-    errors.push("inline cinatra.workflow is forbidden; ship a cinatra/workflow.bpmn sidecar");
-  }
-  if (typeof cinatra.workflowVersion !== "number" || !Number.isInteger(cinatra.workflowVersion) || cinatra.workflowVersion <= 0) {
-    errors.push(`cinatra.workflowVersion must be a positive integer (got ${JSON.stringify(cinatra.workflowVersion)})`);
-  }
-  // `roles` is cross-kind (cinatra#151 Stage 5) — a workflow package may carry it.
-  const allowed = new Set(["kind", "apiVersion", "workflowVersion", "dependencies", "roles"]);
-  for (const k of Object.keys(cinatra)) {
-    if (!allowed.has(k)) errors.push(`unexpected cinatra key "${k}"`);
-  }
-  return errors;
-}
-
-const BPMN_MODEL_NS = "http://www.omg.org/spec/BPMN/20100524/MODEL";
-
-export function validateBpmnSanity(xml) {
-  const errors = [];
-  if (typeof xml !== "string" || xml.trim() === "") {
-    errors.push("cinatra/workflow.bpmn is empty");
-    return errors;
-  }
-  // Strip comments/CDATA/PIs/DOCTYPE to a fixpoint: a single replace pass can
-  // splice removed spans into NEW marker sequences (e.g. "<!<!---->--" becomes
-  // "<!--" after one pass), letting crafted input smuggle content past the
-  // tag-structure checks below. Iterating until stable closes that gap.
-  let stripped = xml;
-  for (let previous = null; previous !== stripped; ) {
-    previous = stripped;
-    stripped = stripped
-      .replace(/<!--[\s\S]*?-->/g, "")
-      .replace(/<!\[CDATA\[[\s\S]*?\]\]>/g, "")
-      .replace(/<\?[\s\S]*?\?>/g, "")
-      .replace(/<!DOCTYPE[^>]*>/gi, "");
-  }
-
-  const prefixOf = (qname) => (qname.includes(":") ? qname.split(":")[0] : "");
-  const localOf = (qname) => (qname.includes(":") ? qname.split(":")[1] : qname);
-
-  const tagRe = /<(\/?)([A-Za-z_][\w.-]*(?::[A-Za-z_][\w.-]*)?)((?:[^<>"']|"[^"]*"|'[^']*')*?)(\/?)>/g;
-  const stack = [];
-  let m;
-  let rootName = null;
-  let rootAttrs = "";
-  const openTags = [];
-  while ((m = tagRe.exec(stripped)) !== null) {
-    const isClose = m[1] === "/";
-    const name = m[2];
-    const attrs = m[3] || "";
-    const selfClose = m[4] === "/";
-    if (!isClose) {
-      if (rootName === null) {
-        rootName = name;
-        rootAttrs = attrs;
-      }
-      openTags.push({ prefix: prefixOf(name), local: localOf(name) });
-    }
-    if (selfClose) continue;
-    if (isClose) {
-      const top = stack.pop();
-      if (top !== name) {
-        errors.push(`malformed BPMN XML: closing </${name}> does not match <${top ?? "(none)"}>`);
-        return errors;
-      }
-    } else {
-      stack.push(name);
-    }
-  }
-  if (stack.length > 0) {
-    errors.push(`malformed BPMN XML: unclosed element <${stack[stack.length - 1]}>`);
-    return errors;
-  }
-  if (rootName === null) {
-    errors.push("BPMN has no root element");
-    return errors;
-  }
-  const bpmnPrefixes = new Set();
-  const nsRe = /xmlns(?::([A-Za-z_][\w.-]*))?\s*=\s*(?:"([^"]*)"|'([^']*)')/g;
-  let nm;
-  while ((nm = nsRe.exec(rootAttrs)) !== null) {
-    const prefix = nm[1] ?? "";
-    const uri = nm[2] ?? nm[3];
-    if (uri === BPMN_MODEL_NS) bpmnPrefixes.add(prefix);
-  }
-  if (bpmnPrefixes.size === 0) {
-    errors.push(`not a BPMN document: root element does not bind the BPMN 2.0 MODEL namespace (${BPMN_MODEL_NS})`);
-    return errors;
-  }
-  if (localOf(rootName) !== "definitions" || !bpmnPrefixes.has(prefixOf(rootName))) {
-    errors.push(`BPMN root must be <definitions> in the BPMN MODEL namespace (got <${rootName}>)`);
-  }
-  const processCount = openTags.filter((t) => t.local === "process" && bpmnPrefixes.has(t.prefix)).length;
-  if (processCount < 1) errors.push("BPMN must declare at least one <process> in the BPMN MODEL namespace");
-  return errors;
-}
-
-export function findWorkflowSidecars(packageRoot) {
-  const out = [];
-  const SKIP = new Set(["node_modules", ".git", "dist", "build", ".next", "coverage"]);
-  const walk = (dir) => {
-    let entries;
-    try {
-      entries = readdirSync(dir, { withFileTypes: true });
-    } catch {
-      return;
-    }
-    for (const e of entries) {
-      const full = join(dir, e.name);
-      if (e.isDirectory()) {
-        if (SKIP.has(e.name)) continue;
-        walk(full);
-      } else if (e.name === "workflow.bpmn" && basename(dirname(full)) === "cinatra") {
-        out.push(full);
-      }
-    }
-  };
-  walk(packageRoot);
-  return out;
-}
-
-export function validateWorkflow(packageRoot) {
-  const errors = [];
-  let pkg;
-  try {
-    pkg = readPackageJson(packageRoot);
-  } catch (err) {
-    errors.push(`could not read package.json: ${err instanceof Error ? err.message : String(err)}`);
-    return errors;
-  }
-  errors.push(...validateWorkflowPackageShape(pkg));
-  const bpmnPath = join(packageRoot, "cinatra", "workflow.bpmn");
-  if (!existsSync(bpmnPath)) {
-    errors.push("missing required sidecar cinatra/workflow.bpmn");
-    return errors;
-  }
-  const allSidecars = findWorkflowSidecars(packageRoot);
-  if (allSidecars.length > 1) {
-    errors.push(`expected exactly one cinatra/workflow.bpmn, found ${allSidecars.length}: ${allSidecars.map((p) => relative(packageRoot, p)).join(", ")}`);
-    return errors;
-  }
-  let xml;
-  try {
-    xml = readFileSync(bpmnPath, "utf8");
-  } catch (err) {
-    errors.push(`could not read cinatra/workflow.bpmn: ${err instanceof Error ? err.message : String(err)}`);
-    return errors;
-  }
-  errors.push(...validateBpmnSanity(xml));
-  return errors;
-}
-
-// ===========================================================================
 // dispatch
 // ===========================================================================
 const KIND_GATES = {
@@ -2102,7 +1821,6 @@ const KIND_GATES = {
   connector: validateConnector,
   artifact: validateArtifact,
   skill: validateSkill,
-  workflow: validateWorkflow,
 };
 
 /** Run the full gate for the package at packageRoot. Returns
