@@ -41,9 +41,9 @@
     { "title": "project_ref", "type": "string" },
     { "title": "template_package", "type": "string" },
     { "title": "anchor_date", "type": "string" },
-    { "title": "as_of", "type": "string" },
-    { "title": "configured_provider_id", "type": "string" },
-    { "title": "project_id", "type": "string" }
+    { "title": "as_of", "type": "string", "description": "Enter the date in YYYY-MM-DD format for deciding which project tasks are ready to run." },
+    { "title": "configured_provider_id", "type": "string", "description": "Optional connected PM provider ID. Leave blank to use the existing project binding or the only connected provider; ambiguous or missing providers are refused.", "default": "" },
+    { "title": "project_id", "type": "string", "description": "Optional project ID for the project instance. Leave blank when the project has no project scope.", "default": "" }
   ],
   "outputs": [
     { "title": "result", "type": "string" }
@@ -156,16 +156,16 @@
       "name": "Inputs",
       "metadata": {
         "cinatra": {
-          "required": ["project_ref", "template_package", "anchor_date"]
+          "required": ["project_ref", "template_package", "anchor_date", "as_of"]
         }
       },
       "inputs": [
         { "title": "project_ref", "type": "string" },
         { "title": "template_package", "type": "string" },
         { "title": "anchor_date", "type": "string" },
-        { "title": "as_of", "type": "string" },
-        { "title": "configured_provider_id", "type": "string" },
-        { "title": "project_id", "type": "string" }
+        { "title": "as_of", "type": "string", "description": "Enter the date in YYYY-MM-DD format for deciding which project tasks are ready to run." },
+        { "title": "configured_provider_id", "type": "string", "description": "Optional connected PM provider ID. Leave blank to use the existing project binding or the only connected provider; ambiguous or missing providers are refused.", "default": "" },
+        { "title": "project_id", "type": "string", "description": "Optional project ID for the project instance. Leave blank when the project has no project scope.", "default": "" }
       ]
     },
     "instantiate": {
